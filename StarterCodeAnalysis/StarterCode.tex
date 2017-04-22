@@ -1,0 +1,250 @@
+% Created 2017-04-22 Sat 17:02
+% Intended LaTeX compiler: pdflatex
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{grffile}
+\usepackage{longtable}
+\usepackage{wrapfig}
+\usepackage{rotating}
+\usepackage[normalem]{ulem}
+\usepackage{amsmath}
+\usepackage{textcomp}
+\usepackage{amssymb}
+\usepackage{capt-of}
+\usepackage{hyperref}
+\author{Jing-jiang Li}
+\date{\today}
+\title{}
+\hypersetup{
+ pdfauthor={Jing-jiang Li},
+ pdftitle={},
+ pdfkeywords={},
+ pdfsubject={},
+ pdfcreator={Emacs 25.2.1 (Org mode 9.0.5)}, 
+ pdflang={English}}
+\begin{document}
+
+\tableofcontents
+
+\section{Youtube-8M Starter Code}
+\label{sec:orgb727322}
+
+\subsection{Project Structure (Core Part)}
+\label{sec:org72e023b}
+
+\subsubsection{Train (Model):}
+\label{sec:org9d6c1f0}
+
+\begin{enumerate}
+\item Related Files
+\label{sec:orgf38be2a}
+
+\begin{enumerate}
+\item Processing Utility
+\label{sec:org40acb0b}
+\begin{itemize}
+\item train.py: The primary script for training models.
+\item losses.py: Contains definitions for loss functions.
+\item export\_model.py: Provides a class to export a model during training for later use in batch prediction.
+\item readers.py: Contains definitions for the Video dataset and Frame dataset readers.
+\end{itemize}
+\item Models
+\label{sec:orga201e1d}
+\begin{enumerate}
+\item Model Utility
+\label{sec:org0368e2c}
+\begin{itemize}
+\item models.py: Base class for defining a model. (common interface) - model\_util.py: Must implement to define a model
+\end{itemize}
+\item Model Processing Logic
+\label{sec:orgbf23828}
+\begin{itemize}
+\item video\_level\_models.py: take whole video (agreegated features) as input
+\item frame\_level\_models.py: take frame level features as input
+\end{itemize}
+\end{enumerate}
+\end{enumerate}
+\item Model Analysis
+\label{sec:orgd28958b}
+
+take video\_level\_models as an example:
+
+it contains two sub models inside of it
+
+\begin{itemize}
+\item \texttt{LogisticModel}
+\end{itemize}
+
+\begin{verbatim}
+class LogisticModel(models.BaseModel):
+
+  def create_model(self, model_input, vocab_size, l2_penalty=1e-8,
+**unused_params):
+    output = slim.fully_connected(
+        model_input, vocab_size, activation_fn=tf.nn.sigmoid,
+        weights_regularizer=slim.l2_regularizer(l2_penalty))
+    return {"predictions": output}
+\end{verbatim}
+
+\textbf{Analysis for this model}
+
+\begin{itemize}
+\item Input: matrix of input features/ number of classes in the dataset
+\begin{itemize}
+\item How to set up the input:
+
+By chaning the --train\_data\_pattern flag, we can specify smaller data set. 
+
+To be more specific, using the following command
+
+\begin{verbatim}
+python train.py
+--train_data_pattern='/path/to/features/train*.tfrecord'
+--model=LogisticModel --train_dir=$MODEL_DIR/video_level_logistic_model
+\end{verbatim}
+\end{itemize}
+\end{itemize}
+
+
+\begin{itemize}
+\item Output:A dictionary with a tensor containing the probability predictions of the model in the 'predictions' key.
+\begin{itemize}
+\item How to save the output:
+
+By chaning the --train\_dir, we can specify where to store the result
+\begin{verbatim}
+python train.py
+--train_data_pattern='/path/to/features/train*.tfrecord'
+--model=LogisticModel --train_dir=$MODEL_DIR/video_level_logistic_model
+\end{verbatim}
+\end{itemize}
+
+\item Processing Model: slim.fully\_connected from tensorflow. A specific layer from neural network.
+Other layers
+\begin{center}
+\begin{tabular}{ll}
+\hline
+Layer & TF-Slim\\
+\hline
+BiasAdd & slim.bias\_add\\
+BatchNorm & slim.batch\_norm\\
+Conv2d & slim.conv2d\\
+Conv2dInPlane & slim.conv2d\_in\_plane\\
+Conv2dTranspose (Deconv) & slim.conv2d\_transpose\\
+AvgPool2D & slim.avg\_pool2d\\
+Dropout & slim.dropout\\
+\hline
+\end{tabular}
+\end{center}
+\end{itemize}
+
+
+
+
+\begin{itemize}
+\item \texttt{MoeModel}
+\end{itemize}
+\begin{verbatim}
+class MoeModel(models.BaseModel):
+
+  def create_model(self,
+                   model_input,
+                   vocab_size,
+                   num_mixtures=None,
+                   l2_penalty=1e-8,
+                   **unused_params):
+    num_mixtures = num_mixtures or FLAGS.moe_num_mixtures
+
+    gate_activations = slim.fully_connected(
+        model_input,
+        vocab_size * (num_mixtures + 1),
+        activation_fn=None,
+        biases_initializer=None,
+        weights_regularizer=slim.l2_regularizer(l2_penalty),
+        scope="gates")
+    expert_activations = slim.fully_connected(
+        model_input,
+        vocab_size * num_mixtures,
+        activation_fn=None,
+        weights_regularizer=slim.l2_regularizer(l2_penalty),
+        scope="experts")
+
+    gating_distribution = tf.nn.softmax(tf.reshape(
+        gate_activations,
+        [-1, num_mixtures + 1]))
+    expert_distribution = tf.nn.sigmoid(tf.reshape(
+        expert_activations,
+        [-1, num_mixtures]))
+
+    final_probabilities_by_class_and_batch = tf.reduce_sum(
+        gating_distribution[:, :num_mixtures] * expert_distribution, 1)
+    final_probabilities = tf.reshape(final_probabilities_by_class_and_batch,
+                                     [-1, vocab_size])
+    return {"predictions": final_probabilities}
+\end{verbatim}
+
+\textbf{How to build our own model}
+
+\begin{enumerate}
+\item The model should inherit \texttt{models.BaseModel}
+\item Specify Input from command
+\item Output should satisfy the format: \texttt{return \{"predictions": final\_probabilities\}}
+\end{enumerate}
+\end{enumerate}
+
+
+
+\subsubsection{Evaluation}
+\label{sec:org3ca2c3b}
+We can use this part directly
+\begin{enumerate}
+\item Related Files
+\label{sec:orgdd4010f}
+\begin{itemize}
+\item eval.py: The primary script for evaluating models.
+\item eval\_util.py: Provides a class that calculates all evaluation metrics.
+\item average\_precision\_calculator.py: Functions for calculating average precision.
+\item mean\_average\_precision\_calculator.py: Functions for calculating mean average precision.
+\end{itemize}
+
+\item How to use them
+\label{sec:org6f76e5f}
+
+Through command line:
+
+To evaluate the model, run
+
+\begin{verbatim}
+python eval.py --eval_data_pattern='/path/to/features/validate*.tfrecord'
+--model=LogisticModel
+--train_dir=$MODEL_DIR/video_level_logistic_model --run_once=True
+\end{verbatim}
+
+As the model is training or evaluating, you can view the results on tensorboard by running
+
+\begin{verbatim}
+tensorboard --logdir=$MODEL_DIR
+\end{verbatim}
+
+and navigating to \url{http://localhost:6006} in your web browser.
+
+When you are happy with your model, you can generate a csv file of predictions from it by running
+\begin{verbatim}
+python inference.py
+--output_file=$MODEL_DIR/video_level_logistic_model/predictions.csv
+--input_data_pattern='/path/to/features/test*.tfrecord'
+--train_dir=$MODEL_DIR/video_level_logistic_model
+\end{verbatim}
+This will output the top 20 predicted labels from the model for every example to 'predictions.csv'.
+\end{enumerate}
+
+\subsubsection{Others}
+\label{sec:orgfe03291}
+
+No need to touch other files
+
+\subsection{Set up Pycharm Development Environment}
+\label{sec:org8085958}
+\end{document}
