@@ -1,4 +1,4 @@
-% Created 2017-04-22 Sat 17:02
+% Created 2017-04-23 Sun 16:29
 % Intended LaTeX compiler: pdflatex
 \documentclass[11pt]{article}
 \usepackage[utf8]{inputenc}
@@ -29,21 +29,21 @@
 \tableofcontents
 
 \section{Youtube-8M Starter Code}
-\label{sec:orgb727322}
+\label{sec:org7447352}
 
 \subsection{Project Structure (Core Part)}
-\label{sec:org72e023b}
+\label{sec:org95d6e78}
 
 \subsubsection{Train (Model):}
-\label{sec:org9d6c1f0}
+\label{sec:org18064e6}
 
 \begin{enumerate}
 \item Related Files
-\label{sec:orgf38be2a}
+\label{sec:org56e608b}
 
 \begin{enumerate}
 \item Processing Utility
-\label{sec:org40acb0b}
+\label{sec:orgf7330cb}
 \begin{itemize}
 \item train.py: The primary script for training models.
 \item losses.py: Contains definitions for loss functions.
@@ -51,15 +51,15 @@
 \item readers.py: Contains definitions for the Video dataset and Frame dataset readers.
 \end{itemize}
 \item Models
-\label{sec:orga201e1d}
+\label{sec:org093eab1}
 \begin{enumerate}
 \item Model Utility
-\label{sec:org0368e2c}
+\label{sec:orgb53df69}
 \begin{itemize}
 \item models.py: Base class for defining a model. (common interface) - model\_util.py: Must implement to define a model
 \end{itemize}
 \item Model Processing Logic
-\label{sec:orgbf23828}
+\label{sec:org5d3e38f}
 \begin{itemize}
 \item video\_level\_models.py: take whole video (agreegated features) as input
 \item frame\_level\_models.py: take frame level features as input
@@ -67,7 +67,7 @@
 \end{enumerate}
 \end{enumerate}
 \item Model Analysis
-\label{sec:orgd28958b}
+\label{sec:org47974d4}
 
 take video\_level\_models as an example:
 
@@ -95,7 +95,7 @@ class LogisticModel(models.BaseModel):
 \begin{itemize}
 \item How to set up the input:
 
-By chaning the --train\_data\_pattern flag, we can specify smaller data set. 
+By chaning the --train\_data\_pattern flag, we can specify smaller data set.
 
 To be more specific, using the following command
 
@@ -197,11 +197,11 @@ class MoeModel(models.BaseModel):
 
 
 \subsubsection{Evaluation}
-\label{sec:org3ca2c3b}
+\label{sec:org283b896}
 We can use this part directly
 \begin{enumerate}
 \item Related Files
-\label{sec:orgdd4010f}
+\label{sec:org3ce9f6f}
 \begin{itemize}
 \item eval.py: The primary script for evaluating models.
 \item eval\_util.py: Provides a class that calculates all evaluation metrics.
@@ -210,7 +210,7 @@ We can use this part directly
 \end{itemize}
 
 \item How to use them
-\label{sec:org6f76e5f}
+\label{sec:org1f04199}
 
 Through command line:
 
@@ -241,10 +241,99 @@ This will output the top 20 predicted labels from the model for every example to
 \end{enumerate}
 
 \subsubsection{Others}
-\label{sec:orgfe03291}
+\label{sec:org3ae6745}
 
 No need to touch other files
 
 \subsection{Set up Pycharm Development Environment}
-\label{sec:org8085958}
+\label{sec:orgb917edf}
+\section{How to insert our own model}
+\label{sec:org8aba012}
+\subsection{Where to put the model}
+\label{sec:orgc99ad49}
+
+In file: \texttt{video\_level\_models.py}, insert the following code
+
+\begin{verbatim}
+class RegressorModel(models.BaseModel):
+  """Logistic model with L2 regularization."""
+
+  def create_model(self, model_input, vocab_size, l2_penalty=1e-8, **unused_params):
+    """Creates a logistic model.
+
+    Args:
+      model_input: 'batch' x 'num_features' matrix of input features.
+      vocab_size: The number of classes in the dataset.
+
+    Returns:
+      A dictionary with a tensor containing the probability predictions of the
+      model in the 'predictions' key. The dimensions of the tensor are
+      batch_size x num_classes."""
+
+    vid_ids = []
+    labels = []
+    labels_for_MLP = []
+    mean_rgb = []
+    mean_audio = []
+
+    i=0
+    label_mapping = pd.Series.from_csv('label_names.csv',header=0).to_dict()
+    n = len(label_mapping)
+
+    print ("=====================")
+    print (model_input)
+    print ("=====================")
+    for example in tf.python_io.tf_record_iterator("train-0.tfrecord"):
+        tf_example = tf.train.Example.FromString(example) # get visualized TFRecord
+        vid_ids.append(tf_example.features.feature['video_id']
+                       .bytes_list.value[0].decode(encoding='UTF-8'))
+
+        array = np.zeros(n)
+        tmp_labels=tf_example.features.feature['labels'].int64_list.value
+        tmp_labels_after_pp = []
+        for x in tmp_labels:
+            if x<4716:
+                tmp_labels_after_pp.append(x)
+        labels.append(tmp_labels_after_pp)
+        array[tmp_labels]=1
+        labels_for_MLP.append(array)
+
+        mean_rgb.append(tf_example.features.feature['mean_rgb'].float_list.value)
+        mean_audio.append(tf_example.features.feature['mean_audio'].float_list.value)
+
+    output = slim.fully_connected(
+        model_input, vocab_size, activation_fn=tf.nn.sigmoid,
+        weights_regularizer=slim.l2_regularizer(l2_penalty))
+
+    X = mean_audio #[[0., 0.], [1., 1.]]
+    y = labels_for_MLP #[[0, 1, 1], [1, 1, 0], [1, 0, 0]]
+    clf = MLPRegressor(solver='lbfgs', alpha=1e-5, hidden_layer_sizes=(15,),
+                       random_state=1)
+    clf.fit(X, y)
+    # clf.predict([[2., 2.], [-1., -2.]])
+    result1 = clf.predict([mean_audio[8]])
+    result_tensor = tf.convert_to_tensor(result1)
+    return {"predictions": result_tensor}
+\end{verbatim}
+
+
+\subsection{Convert between tensor with np array}
+\label{sec:orgbba1067}
+
+\subsubsection{np array to tensor}
+\label{sec:orga2c3009}
+
+\begin{verbatim}
+result1 = clf.predict([mean_audio[8]])
+result_tensor = tf.convert_to_tensor(result1)
+\end{verbatim}
+
+\subsubsection{tensor to np array}
+\label{sec:org41426d6}
+\begin{verbatim}
+# create a new session firstly as default session
+sess = tf.InteractiveSession()
+# after calling eval() function, we can print out the result
+print(output.eval())
+\end{verbatim}
 \end{document}
